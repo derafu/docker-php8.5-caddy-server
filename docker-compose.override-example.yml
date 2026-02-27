@@ -1,0 +1,20 @@
+#
+# Docker Compose override file.
+#
+
+# Services.
+services:
+
+  # Webserver container.
+  webserver:
+
+    # Volumes.
+    volumes:
+      - ${VOLUME_CADDY:-./config/caddy}:/etc/caddy
+
+    # Ports mapping to the host.
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+      - "${SSH_PORT:-2222}:22"
+      - "${MANAGER_PORT:-9090}:9090"

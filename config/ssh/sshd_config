@@ -1,0 +1,40 @@
+# SSH Server Configuration.
+# This is a basic secure configuration for the container.
+
+# Basic SSH server settings.
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Authentication.
+LoginGraceTime 60
+PermitRootLogin no
+StrictModes yes
+MaxAuthTries 3
+MaxSessions 5
+
+# Create a admin user for management and deployment operations.
+# The actual user will be created in the Dockerfile.
+AllowUsers admin
+
+# Use public key authentication only.
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+
+# Forwarding.
+X11Forwarding no
+PrintMotd no
+
+# Logging.
+SyslogFacility AUTH
+LogLevel INFO
+
+# Allow client to pass locale environment variables.
+AcceptEnv LANG LC_*
+
+# Override default of no subsystems.
+Subsystem sftp /usr/lib/openssh/sftp-server

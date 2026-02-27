@@ -1,0 +1,240 @@
+# Environment variables.
+export EDITOR=$(sudo cat /proc/1/environ | tr '\0' '\n' | grep EDITOR | cut -d= -f2)
+export VISUAL=$(sudo cat /proc/1/environ | tr '\0' '\n' | grep VISUAL | cut -d= -f2)
+export SITES_DIR=$(sudo cat /proc/1/environ | tr '\0' '\n' | grep SITES_DIR | cut -d= -f2)
+export DEPLOYER_DIR=$(sudo cat /proc/1/environ | tr '\0' '\n' | grep DEPLOYER_DIR | cut -d= -f2)
+export DEPLOYER_HOST=$(sudo cat /proc/1/environ | tr '\0' '\n' | grep DEPLOYER_HOST | cut -d= -f2)
+
+# Usefull aliases.
+alias ll='ls -lah'
+alias ..='cd ..'
+alias caddy-restart='sudo supervisorctl restart caddy'
+alias php-restart='sudo supervisorctl restart php-fpm'
+
+# Autocomplete for sites from directories.
+_sites_autocomplete_from_dirs() {
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    COMPREPLY=( $(compgen -W "$(ls -1 "$SITES_DIR")" -- "$cur") )
+}
+
+# Autocomplete for sites from PHP file configuration.
+_sites_autocomplete_from_php() {
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    local sites=$(php -r "
+        \$sites = include '$DEPLOYER_DIR/sites.php';
+        echo implode(' ', array_keys(\$sites));
+    ")
+    COMPREPLY=( $(compgen -W "$sites" -- "$cur") )
+}
+
+# Usefull functions.
+site() {
+    if [ -z "$1" ]; then
+        echo "Usage: site <domain>"
+        return 1
+    fi
+    cd "$SITES_DIR/$1" || echo "Error: Directory $SITES_DIR/$1 not found."
+}
+complete -F _sites_autocomplete_from_dirs site
+
+site-dependencies-install() {
+    composer install && \
+    npm install
+}
+
+site-dependencies-update() {
+    composer update && \
+    npm update
+}
+
+site-build() {
+    npm run build
+}
+
+site-clean() {
+    rm -rf "$SITES_DIR/$1/public/static" "$SITES_DIR/$1/var"
+}
+
+site-check() {
+    composer phpcs && \
+    composer phpstan && \
+    composer tests
+}
+
+site-status() {
+    git status
+}
+
+site-update() {
+    git pull && \
+    site-dependencies-update && \
+    site-build
+}
+
+site-send() {
+    if [ -z "$1" ]; then
+        echo "Usage: site-send \"<commit message>\""
+        return 1
+    fi
+    git add . && \
+    git commit -m "$1" && \
+    git push
+}
+
+site-deploy() {
+    if [ -z "$1" ]; then
+        echo "Usage: site-deploy <domain>"
+        return 1
+    fi
+    "$DEPLOYER_DIR/vendor/bin/dep" -f "$DEPLOYER_DIR/deploy.php" derafu:deploy:single --site="$1"
+}
+complete -F _sites_autocomplete_from_php site-deploy
+
+site-deploy-locked() {
+    if [ -z "$1" ]; then
+        echo "Usage: site-deploy-locked <domain>"
+        return 1
+    fi
+    "$DEPLOYER_DIR/vendor/bin/dep" -f "$DEPLOYER_DIR/deploy.php" derafu:deploy:single --site="$1" --unlock
+}
+complete -F _sites_autocomplete_from_php site-deploy-locked
+
+site-list() {
+    if [ ! -d "$SITES_DIR" ]; then
+        echo "Error: SITES_DIR ($SITES_DIR) does not exist."
+        return 1
+    fi
+
+    echo -e "\nChecking sites in $SITES_DIR...\n"
+
+    # Get list of folders (sites).
+    sites=($(ls -d "$SITES_DIR"/*/ 2>/dev/null | xargs -n 1 basename | sort))
+
+    # If no sites, exit.
+    if [ ${#sites[@]} -eq 0 ]; then
+        echo "No sites found in $SITES_DIR."
+        return 0
+    fi
+
+    # Get sites configuration from PHP.
+    site_config=$(php -r "
+        \$sites = include '$DEPLOYER_DIR/sites.php';
+        echo json_encode(\$sites, JSON_PRETTY_PRINT);
+    ")
+
+    # Header of the table.
+    printf "%-30s %-50s %-5s %-5s %-4s\n" "DOMAIN" "REPOSITORY" "MATCH" "DIRTY" "PULL"
+    printf "%-30s %-50s %-5s %-5s %-4s\n" "------------------------------" "--------------------------------------------------" "-----" "-----" "----"
+
+    # Iterate over each site.
+    for site in "${sites[@]}"; do
+        site_path="$SITES_DIR/$site"
+        repo_local=""
+        repo_config=""
+        match="NO"
+        dirty="NO"
+        pull="NO"
+
+        # Extract the repository from the PHP file.
+        repo_config=$(
+            echo "$site_config" \
+            | jq -r --arg site "$site" '.[$site] | if type=="string" then . else .repository end' \
+            | grep -v null || echo "N/A" \
+        )
+
+        # If it is a Git repository, get the remote URL.
+        if [ -d "$site_path/.git" ]; then
+            repo_local=$(git -C "$site_path" remote get-url origin 2>/dev/null || echo "Unknown")
+
+            # Compare repositories.
+            [ "$repo_local" == "$repo_config" ] && match="YES"
+
+            # Check if the repository is dirty.
+            [ -n "$(git -C "$site_path" status --porcelain)" ] && dirty="YES"
+
+            # Check if there are pending remote changes.
+            git -C "$site_path" fetch -q
+            count=$(git -C "$site_path" rev-list HEAD...origin --count 2>/dev/null || echo "0")
+            [ "$count" -gt 0 ] && pull="YES"
+        fi
+
+        # Show results.
+        printf "%-30s %-50s %-5s %-5s %-4s\n" "$site" "${repo_config:-N/A}" "$match" "$dirty" "$pull"
+    done
+}
+
+site-clone() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: site-clone <domain> <git-repo-url>"
+        return 1
+    fi
+    git clone "$2" "$SITES_DIR/$1" && \
+    site-add "$1" "$2" && \
+    site "$1" && \
+    site-dependencies-install && \
+    site-build
+}
+
+site-create() {
+    if [ -z "$1" ]; then
+        echo "Usage: site-create <domain>"
+        return 1
+    fi
+    cd "$SITES_DIR" && \
+    composer create-project derafu/website "$1" --stability=dev && \
+    site "$1" && \
+    site-dependencies-install && \
+    site-build && \
+    git init
+}
+
+site-add() {
+    if [ -z "$1" ] || [ -z "$2" ]; then
+        echo "Usage: site-add <domain> <git-repo-url>"
+        return 1
+    fi
+    "$DEPLOYER_DIR/site-add.sh" "$1" "$2"
+}
+
+# Welcome message and useful commands.
+site-help() {
+    echo -e "\n🚀 PHP & Caddy Docker Environment - Help Guide 🚀\n"
+    echo -e "This container is configured for developing and managing PHP-based sites with Caddy.\n"
+
+    echo -e "Usage:"
+    echo -e "  site <domain>                   # Navigate to a site directory"
+    echo -e "  site-list                       # List all configured sites"
+    echo -e "  site-create <domain>            # Create a new site"
+    echo -e "  site-clone <domain> <git-url>   # Clone an existing site"
+    echo -e "  site-add <domain> <git-url>     # Add a site to the deployer configuration"
+
+    echo -e "\nSite Management Commands (inside the site directory):"
+    echo -e "  site-dependencies-install       # Install dependencies (Composer & npm)"
+    echo -e "  site-dependencies-update        # Update dependencies (Composer & npm)"
+    echo -e "  site-build                      # Build the site's assets"
+    echo -e "  site-clean                      # Remove cached files"
+    echo -e "  site-check                      # Run PHPCS, PHPStan and PHPUnit"
+    echo -e "  site-status                     # Show the Git status"
+    echo -e "  site-update                     # Pull latest changes and rebuild"
+    echo -e "  site-send \"<commit message>\"    # Add, commit and push all changes"
+
+    echo -e "\nDeployment Commands:"
+    echo -e "  site-deploy <domain>            # Deploy the site using Deployer"
+    echo -e "  site-deploy-locked <domain>     # Deploy even if locked (force unlock)"
+
+    echo -e "\nAliases & Utility Commands:"
+    echo -e "  ll                              # Shortcut for 'ls -lah'"
+    echo -e "  ..                              # Move up one directory"
+    echo -e "  caddy-restart                   # Restart Caddy via Supervisor"
+    echo -e "  php-restart                     # Restart PHP-FPM via Supervisor"
+
+    echo -e "\nEnvironment Variables:"
+    echo -e "  SITES_DIR:    $SITES_DIR"
+    echo -e "  DEPLOYER_DIR: $DEPLOYER_DIR"
+    echo -e "  DEPLOYER_HOST: $DEPLOYER_HOST"
+
+    echo -e "\nFor additional help, contact the administrator or check the project documentation."
+}
+
+# Show the sites help when the user enters the container.
+site-help

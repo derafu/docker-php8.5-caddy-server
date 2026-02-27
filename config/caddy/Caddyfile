@@ -1,0 +1,162 @@
+#
+# Caddyfile for the Caddy web server.
+#
+# This file is used to configure the Caddy web server.
+#
+
+# Global configuration.
+{
+	{$CADDY_DEBUG}
+	email {$CADDY_EMAIL}
+
+	on_demand_tls {
+		ask http://localhost:9090/api/ask
+	}
+}
+
+#
+# Normalize the domain, in the $_GET['domain'] variable, to the real domain.
+#
+# The process is as follows:
+#
+#   1. The domain is mapped to the non-local domain (removes .local if present).
+#   2. The domain is mapped to remove environment subdomains (stage, dev, qa, etc).
+#   3. The non-local domain is mapped to the real domain (adds www if needed).
+#   4. The real domain is checked if it exists as a directory in the {$WWW_ROOT_PATH}.
+#   5. If the real domain exists, the endpoint will return a 200 status.
+#   6. Otherwise, it will return a 404 status.
+#
+(normalize_domain) {
+	# Remove the .local extension from the domain if exists.
+	map {domain_input} {non_local_domain} {
+		~(.*)\.local$ "${1}"
+		default "{domain_input}"
+	}
+
+	# Remove environment subdomain (stage, dev, qa, etc) if exists.
+	# This handles patterns like app.stage.example.com -> app.example.com
+	# or www.dev.example.com -> www.example.com
+	map {non_local_domain} {no_env_domain} {
+		~^([^.]+)\.(local|dev|qa|stage)\.(.*?)$ "${1}.${3}"
+		default "{non_local_domain}"
+	}
+
+	# Add www to the domain if it doesn't exist and the domain is a second level
+	# domain.
+	map {no_env_domain} {real_domain} {
+		~^(www\..+)$ "${1}"
+		~^([^.]+\.[^.]+)$ "www.${1}"
+		default "{no_env_domain}"
+	}
+}
+
+# HTTP - redirect everything to HTTPS.
+:80 {
+	# Add basic logging.
+	log {
+		output file /var/log/caddy/http_redirect.log {
+			roll_size 10mb
+			roll_keep 3
+		}
+	}
+
+	# Redirect all HTTP traffic to HTTPS.
+	redir https://{host}{uri} permanent
+}
+
+# HTTPS - handle all actual processing.
+:443 {
+	# Normalize the domain to the real domain.
+	map {host} {domain_input} {
+		default "{host}"
+	}
+	import normalize_domain
+
+	# Add main logging.
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size {$CADDY_LOG_SIZE}
+			roll_keep {$CADDY_LOG_KEEP}
+		}
+	}
+
+	# TLS configuration at site level.
+	tls {
+		issuer {$CADDY_HTTPS_ISSUER}
+		on_demand
+	}
+
+	# Redirect non-www to www for main domains.
+	@non_www vars_regexp non_www {host} ^([^.]+)\.([^.]+)(\.local)?$
+	handle @non_www {
+		redir http://www.{re.non_www.1}.{re.non_www.2}{uri} permanent
+	}
+
+	# Local development domains (.local).
+	@local_domain vars_regexp local_domain {host} ^(.+)\.local$
+	handle @local_domain {
+		root * {$WWW_ROOT_PATH}/{re.local_domain.1}/public
+		php_fastcgi unix//var/run/php/php-fpm.sock {
+			resolve_root_symlink
+			env PHP_ENV development
+			env APP_ENV dev
+		}
+	}
+
+	# Production domains.
+	@production {
+		not host *.local
+	}
+	handle @production {
+		root * {$WWW_ROOT_PATH}/{real_domain}/current
+		php_fastcgi unix//var/run/php/php-fpm.sock {
+			try_files public/index.php
+			resolve_root_symlink
+			env PHP_ENV production
+			env APP_ENV prod
+		}
+	}
+
+	# Default response.
+	respond "Domain {domain_input} (Site: {real_domain}) is not available." 404
+}
+
+#
+# On-demand TLS endpoint and Webhook Handler.
+#
+# This endpoint is used to check if a domain is available for TLS.
+# It will return a 200 status if the domain is available, otherwise it will
+# return a 404 status.
+#
+# Also is used to handle webhooks sent to the server. The webhook is processed
+# by the {$WWW_ROOT_PATH}/.admin/webhook.php file.
+#
+:9090 {
+	# Handle TLS ask.
+	# Normalize the domain to the real domain.
+	# Check if the real domain exists as a directory in the {$WWW_ROOT_PATH}.
+	# If the real domain exists, return a 200 status.
+	root * {$WWW_ROOT_PATH}
+	map {query.domain} {domain_input} {
+		default "{query.domain}"
+	}
+	import normalize_domain
+	@ask <<CEL
+        path('/api/ask')
+        && {real_domain} != ""
+        && (file({'try_files': [{real_domain} + '/']}) || {$CADDY_HTTPS_ALLOW_ANY_HOST})
+    CEL
+	handle @ask {
+		respond "Domain {real_domain} is available." 200
+	}
+
+	# Handle webhooks.
+	@webhook path /api/webhook
+	handle @webhook {
+		rewrite * /.admin/webhook.php
+		php_fastcgi unix//var/run/php/php-fpm.sock
+	}
+
+	# Default response.
+	respond "Invalid request." 400
+}

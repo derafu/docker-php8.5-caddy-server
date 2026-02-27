@@ -1,0 +1,51 @@
+#
+# Docker Compose file for the Derafu Sites Server.
+#
+# This file is used to configure the docker container for the Derafu Sites Server.
+#
+
+# Services.
+services:
+
+  # Webserver container.
+  webserver:
+
+    # Build the container from the Dockerfile.
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CADDY_DEBUG: ${CADDY_DEBUG:-}
+        WWW_ROOT_PATH: ${WWW_ROOT_PATH:-/var/www/sites}
+        WWW_USER: ${WWW_USER:-admin}
+        WWW_GROUP: ${WWW_GROUP:-www-data}
+        DEPLOYER_HOST: ${DEPLOYER_HOST:-}
+
+    # Name of the container (PHP 8.5).
+    container_name: ${SERVER_NAME:-php85-caddy}
+
+    # Environment variables.
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-php85-caddy}
+      CADDY_DEBUG: ${CADDY_DEBUG:-}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+      CADDY_LOG_SIZE: ${CADDY_LOG_SIZE:-100mb}
+      CADDY_LOG_KEEP: ${CADDY_LOG_KEEP:-5}
+      CADDY_HTTPS_ISSUER: ${CADDY_HTTPS_ISSUER:-internal}
+      CADDY_HTTPS_ALLOW_ANY_HOST: ${CADDY_HTTPS_ALLOW_ANY_HOST:-false}
+      WWW_ROOT_PATH: ${WWW_ROOT_PATH:-/var/www/sites}
+      WWW_USER: ${WWW_USER:-admin}
+      SITES_DIR: ${SITES_DIR:-/home/admin/sites}
+      DEPLOYER_DIR: ${DEPLOYER_DIR:-/home/admin/deployer}
+      DEPLOYER_HOST: ${DEPLOYER_HOST:-}
+      EDITOR: ${EDITOR:-vim}
+      VISUAL: ${VISUAL:-vim}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+
+    # Restart the container unless stopped.
+    restart: unless-stopped
+
+    # Volumes.
+    volumes:
+      - ${VOLUME_SITES:-./sites}:${WWW_ROOT_PATH:-/var/www/sites}
+      - ${VOLUME_DEPLOYER:-./deployer}:${DEPLOYER_DIR:-/home/admin/deployer}
