@@ -101,8 +101,8 @@ RUN \
     # Create admin user for SSH access.
     && useradd -m -d /home/${WWW_USER} -s /bin/bash ${WWW_USER} \
     && usermod -p '*' ${WWW_USER} \
-    && echo "${WWW_USER} ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
-    && chmod 0440 /etc/sudoers \
+    && echo "${WWW_USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/user-${WWW_USER} \
+    && chmod 0440 /etc/sudoers.d/user-${WWW_USER} \
     && chmod g+w /etc/passwd \
     && mkdir -p /home/${WWW_USER}/.ssh \
     && chmod 700 /home/${WWW_USER}/.ssh \
