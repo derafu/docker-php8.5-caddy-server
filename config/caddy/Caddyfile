@@ -98,22 +98,20 @@
 		root * {$WWW_ROOT_PATH}/{re.local_domain.1}/public
 		php_fastcgi unix//var/run/php/php-fpm.sock {
 			resolve_root_symlink
-			env PHP_ENV development
-			env APP_ENV dev
+			env PHP_ENV local
+			env APP_ENV local
 		}
 	}
 
-	# Production domains.
-	@production {
+	# Non local domains.
+	@non_local {
 		not host *.local
 	}
-	handle @production {
+	handle @non_local {
 		root * {$WWW_ROOT_PATH}/{real_domain}/current
 		php_fastcgi unix//var/run/php/php-fpm.sock {
 			try_files public/index.php
 			resolve_root_symlink
-			env PHP_ENV production
-			env APP_ENV prod
 		}
 	}
 
