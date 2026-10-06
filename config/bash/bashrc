@@ -181,7 +181,7 @@ site-create() {
         return 1
     fi
     cd "$SITES_DIR" && \
-    composer create-project derafu/website "$1" --stability=dev && \
+    composer create-project derafu/website-skeleton "$1" --stability=dev && \
     site "$1" && \
     site-dependencies-install && \
     site-build && \
